@@ -1,5 +1,5 @@
 {
-  "name": "shared",
+  "name": "@repo/shared",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "zod": "^4.4.3"
-  }
+  },
+  "exports": {
+      "./auth/schema": "./src/auth/auth.schema.ts"
+  } 
 }

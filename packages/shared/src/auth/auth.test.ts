@@ -15,7 +15,7 @@ describe("Authentication",()=>{
     })
     test("reject the invalid email first",()=>{
         const input = {
-            emial:"not-an-email",
+            email:"not-an-email",
             password:"password123",
             username:"deepak"
         }
@@ -43,7 +43,7 @@ describe("Authentication",()=>{
     });
     test("accept the valid signin input",()=>{
         const input = {
-            emial:"deepak@test.com",
+            email:"deepak@test.com",
             password:"password123"
         }
         const result = SigninSchema.safeParse(input);
