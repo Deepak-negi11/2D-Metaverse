@@ -28,12 +28,14 @@ export async function handleBulkMetadata(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "[]";
 
-  let userIds: string[];
-  try {
-    userIds = JSON.parse(idsParam);
-  } catch {
-    return Response.json({ message: "ids must be a JSON array" }, { status: 400 });
-  }
+  // ids arrive as "[id1,id2]". IDs are cuid strings (not valid JSON),
+  // so parse by hand: drop the brackets, split on commas, trim each.
+  const userIds = idsParam
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
 
   const users = await prisma.user.findMany({
     where: { id: { in: userIds } },

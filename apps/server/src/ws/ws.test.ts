@@ -1,13 +1,12 @@
 import {describe , test, expect , beforeAll , afterAll} from "bun:test";
-import {resolve, type Server} from "bun";
 import axios from "axios";
 import { startServer } from "../../index";
 
 const Port = 4010;
-const HTTP_URL = `https://localhost:${Port}`;
-const WS_URL = `ws://locahost:${Port}/ws`;
+const HTTP_URL = `http://localhost:${Port}`;
+const WS_URL = `ws://localhost:${Port}/ws`;
 
-let server : Server ;
+let server : ReturnType<typeof startServer> ;
 
 beforeAll(()=>{
    server = startServer(Port);
@@ -87,8 +86,8 @@ async function setupUserAndSpace(){
   const token = signin.data.token as string;
 
   const space = await http.post(
-    "api/v1/space",
-    {name : "WS Space" , dimension :"100x100"},
+    "/api/v1/space",
+    {name : "WS Space" , dimensions :"100x100"},
     {headers:{Authorization :`Bearer ${token}`}},
   );
 
@@ -145,8 +144,93 @@ describe("WebSocket",()=>{
       wsA.send({ type:"join" , payload: {spaceId, token:tokenA}});
       await wsA.nextMessage()
 
-      
+      const wsB = new TestSocket(WS_URL);                                 
+      await wsB.waitForOpen();                                            
+      wsB.send({ type: "join", payload: { spaceId, token: tokenB } });    
+      await wsB.nextMessage(); 
 
+      const broadcast = await wsA.nextMessage();
+      expect(broadcast.type).toBe("user-join");
+      expect(broadcast.payload.userId).toBeString();
+      expect(broadcast.payload.x).toBeNumber()
+      expect(broadcast.payload.y).toBeNumber();
+
+      wsA.close();
+      wsB.close();
+    });
+  });
+
+  describe("movement",()=>{
+    test("a valid on-tile move its bradcast to other users in the space",async()=>{
+      const {token: tokenA , spaceId} = await setupUserAndSpace();
+      const {token: tokenB} = await setupUserAndSpace();
+      
+      const wsA = new TestSocket(WS_URL);
+      await wsA.waitForOpen();
+      wsA.send({type :"join", payload:{spaceId , token: tokenA}});
+      const joinedA = await wsA.nextMessage();
+      const spawn = joinedA.payload.spawn;
+
+      const wsB = new TestSocket(WS_URL);                                 
+      await wsB.waitForOpen();                                            
+      wsB.send({ type: "join", payload: { spaceId, token: tokenB } });    
+      await wsB.nextMessage();                    
+      await wsA.nextMessage();
+
+      wsB.send({ type: "move", payload: { x: spawn.x + 1, y: spawn.y } });
+                                                                        
+      const movement = await wsA.nextMessage();                           
+      expect(movement.type).toBe("movement");                             
+       expect(movement.payload.userId).toBeString();                       
+      expect(movement.payload.x).toBeNumber();                            
+      expect(movement.payload.y).toBeNumber();                            
+                                                                        
+      wsA.close();                                                        
+      wsB.close();                                                        
+    });
+
+    test("a teleport sized move is rejected and snaps the user back" , async()=>{
+      const {token , spaceId} = await setupUserAndSpace();
+
+      const ws = new TestSocket(WS_URL);
+      await ws.waitForOpen();
+      ws.send({ type: "join" , payload: {spaceId , token}});
+      const joined = await ws.nextMessage();
+      const spawn = joined.payload.spawn;
+
+      ws.send({type:"move" , payload :{x:spawn.x + 50, y:spawn.y +50}});
+
+      const message = await ws.nextMessage();
+      expect(message.type).toBe("movement-rejected");
+      expect(message.payload.x).toBe(spawn.x);
+      expect(message.payload.y).toBe(spawn.y);                            
+     ws.close();
     })
   })
-})
+
+ describe("leave", () => {
+    test("other users are notified when a user disconnects", async () => {     
+      const { token: tokenA, spaceId } = await setupUserAndSpace();            
+      const { token: tokenB } = await setupUserAndSpace();                     
+                                                                                  
+      const wsA = new TestSocket(WS_URL);                                            
+      await wsA.waitForOpen();                                                       
+      wsA.send({ type: "join", payload: { spaceId, token: tokenA } });               
+       await wsA.nextMessage();                                                       
+                                                                                      
+      const wsB = new TestSocket(WS_URL);                                            
+      await wsB.waitForOpen();                                                       
+      wsB.send({ type: "join", payload: { spaceId, token: tokenB } });               
+      await wsB.nextMessage();                                                       
+      await wsA.nextMessage(); // user-join (B)                                      
+                                                                                     
+      wsB.close(); // B leaves                                                       
+                                                                                     
+      const message = await wsA.nextMessage();                                       
+      expect(message.type).toBe("user-left");                                        
+      expect(message.payload.userId).toBeString();                                   
+                                                                                     
+      wsA.close();
+    });
+  });
+});                                                                                
