@@ -6,7 +6,7 @@ export async function handleUpdateMetadata(req: Request): Promise<Response> {
   if (auth instanceof Response) return auth;
 
   const body = await req.json().catch(() => null);
-  const avatarId: string | undefined = body?.avatarId;
+  const avatarId: string | undefined = body?.avatarId
 
   if (!avatarId) {
     return Response.json({ message: "avatarId is required" }, { status: 400 });
@@ -28,8 +28,7 @@ export async function handleBulkMetadata(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const idsParam = url.searchParams.get("ids") ?? "[]";
 
-  // ids arrive as "[id1,id2]". IDs are cuid strings (not valid JSON),
-  // so parse by hand: drop the brackets, split on commas, trim each.
+  
   const userIds = idsParam
     .replace(/^\[/, "")
     .replace(/\]$/, "")
