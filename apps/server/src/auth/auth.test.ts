@@ -18,7 +18,7 @@ afterAll(() => {
 
 const client = axios.create({
   baseURL: BACKEND_URL,
-  validateStatus: () => true, // never throw on 4xx/5xx — assert status manually
+  validateStatus: () => true,
 });
 
 async function post(

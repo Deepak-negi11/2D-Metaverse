@@ -1,15 +1,18 @@
-# db
+# Database Package
 
-To install dependencies:
+Prisma schema and database client for the 2D Metaverse backend.
+
+## Files
+
+- `prisma/schema.prisma` - application models.
+- `prisma/migrations` - database migrations.
+- `index.ts` - shared Prisma client.
+
+## Commands
 
 ```bash
-bun install
+bun run generate
+bun run migrate
 ```
 
-To run:
-
-```bash
-bun run 
-```
-
-This project was created using `bun init` in bun v1.3.13. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+Set `DATABASE_URL` before running the server or Prisma commands.

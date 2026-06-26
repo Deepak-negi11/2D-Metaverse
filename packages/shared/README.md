@@ -1,15 +1,10 @@
-# shared
+# Shared
 
-To install dependencies:
+Shared schemas and TypeScript types used by the web and server apps.
 
-```bash
-bun install
-```
+## Contents
 
-To run:
+- `src/auth/auth.schema.ts` - signup and signin request validation.
+- `src/ws/ws.schema.ts` - client and server WebSocket message schemas.
 
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.3.13. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+Export public schemas from `index.ts` so other workspace packages can import them through `@repo/shared`.

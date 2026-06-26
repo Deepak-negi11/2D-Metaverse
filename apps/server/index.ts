@@ -50,7 +50,7 @@ export function startServer(port: number) {
       // Upgrade WebSocket connections on /ws
       if (new URL(req.url).pathname === "/ws") {
         const ok = server.upgrade<SocketData>(req, { data: makeSocketData() });
-        if (ok) return; // upgraded — Bun takes over
+        if (ok) return;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
       return new Response("Not Found", { status: 404 });

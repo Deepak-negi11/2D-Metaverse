@@ -1,122 +1,136 @@
-import jwt from "jsonwebtoken";
 import prisma from "@repo/db";
-import type { Socket,SocketData } from "./room-manager";
+import { ClientMessage } from "@repo/shared";
+import { getUserIdFromToken } from "../middleware/auth";
+import type { Socket, SocketData } from "./room-manager";
 import {
   addToRoom,
-  removeFromRoom,
   broadcast,
   othersInRoom,
-  updatePosition
+  removeFromRoom,
+  updatePosition,
 } from "./room-manager";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
+type JoinPayload = {
+  spaceId: string;
+  token: string;
+};
 
-export function makeSocketData():SocketData{
-  return {x:0 , y:0};
+type MovePayload = {
+  x: number;
+  y: number;
+};
+
+export function makeSocketData(): SocketData {
+  return { x: 0, y: 0 };
 }
 
-function send(ws:Socket , message:unknown){
-  ws.send(JSON.stringify(message))
+function send(ws: Socket, message: unknown) {
+  ws.send(JSON.stringify(message));
 }
 
-export async function onMessage(ws:Socket , raw:string|Buffer){
-  let event:any;
+function isOneTileMove(from: { x: number; y: number }, to: MovePayload) {
+  return Math.abs(to.x - from.x) + Math.abs(to.y - from.y) === 1;
+}
+
+export async function onMessage(ws: Socket, raw: string | Buffer) {
+  let json: unknown;
+
   try {
-    event = JSON.parse(raw.toString())
-  }catch{
-    return send(ws,{type:"error" , message:"Invalid JSON"})
+    json = JSON.parse(raw.toString());
+  } catch {
+    return send(ws, { type: "error", message: "Invalid JSON" });
   }
-  if (event.type === "join") return handleJoin(ws , event.payload);
-  if (event.type === "move") return handleMove(ws, event.payload);
 
-  send(ws , {type:"error" , message:"Unknown message type"})
+  const parsed = ClientMessage.safeParse(json);
+  if (!parsed.success) {
+    return send(ws, { type: "error", message: "Invalid message" });
+  }
 
+  switch (parsed.data.type) {
+    case "join":
+      return handleJoin(ws, parsed.data.payload);
+    case "move":
+      return handleMove(ws, parsed.data.payload);
+  }
 }
 
+async function handleJoin(ws: Socket, payload: JoinPayload) {
+  const userId = getUserIdFromToken(payload.token);
+  if (!userId) {
+    return send(ws, { type: "error", message: "Invalid token" });
+  }
 
- async function handleJoin(ws: Socket, payload: { spaceId?: string; token?: string }) {
-    const { spaceId, token } = payload ?? {};
+  const space = await prisma.space.findUnique({
+    where: { id: payload.spaceId },
+  });
 
-    if (!spaceId || !token) {
-      return send(ws, { type: "error", message: "spaceId and token required" });
-    }
-    let userId: string;
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-      userId = decoded.userId;
-    } catch {
-      return send(ws, { type: "error", message: "Invalid token" });
-    }
-    const space = await prisma.space.findUnique({ where: { id: spaceId } });
-    if (!space) {
-      return send(ws, { type: "error", message: "Space not found" });
-    }
+  if (!space) {
+    return send(ws, { type: "error", message: "Space not found" });
+  }
 
-    const spawn = { x: 0, y: 0 };
+  const spawn = { x: 0, y: 0 };
+  ws.data.userId = userId;
+  ws.data.spaceId = payload.spaceId;
+  ws.data.x = spawn.x;
+  ws.data.y = spawn.y;
 
-    ws.data.userId = userId;
-    ws.data.spaceId = spaceId;
-    ws.data.x = spawn.x;
-    ws.data.y = spawn.y;
-
-  const existing = othersInRoom(spaceId, userId).map((m) => ({
-      id: m.userId,
-      x: m.x,
-      y: m.y,
+  const existingUsers = othersInRoom(payload.spaceId, userId).map((member) => ({
+    id: member.userId,
+    x: member.x,
+    y: member.y,
   }));
 
+  addToRoom(payload.spaceId, {
+    socket: ws,
+    userId,
+    x: spawn.x,
+    y: spawn.y,
+  });
 
-  addToRoom(spaceId, { socket: ws, userId, x: spawn.x, y: spawn.y });
-    send(ws, {
-      type: "space-joined",
-      payload: { userId, spawn, users: existing },
-    });
-  
-    broadcast(spaceId, userId, {
-      type: "user-join",
-      payload: { userId, x: spawn.x, y: spawn.y },
+  send(ws, {
+    type: "space-joined",
+    payload: { userId, spawn, users: existingUsers },
+  });
+
+  broadcast(payload.spaceId, userId, {
+    type: "user-join",
+    payload: { userId, x: spawn.x, y: spawn.y },
+  });
+}
+
+function handleMove(ws: Socket, payload: MovePayload) {
+  const { spaceId, userId, x: currentX, y: currentY } = ws.data;
+
+  if (!spaceId || !userId) {
+    return send(ws, { type: "error", message: "Join a space first" });
+  }
+
+  const currentPosition = { x: currentX, y: currentY };
+  if (!isOneTileMove(currentPosition, payload)) {
+    return send(ws, {
+      type: "movement-rejected",
+      payload: currentPosition,
     });
   }
- 
-  function handleMove(ws: Socket, payload: { x?: number; y?: number }) {
-    const { spaceId, userId, x: curX, y: curY } = ws.data;
-    if (!spaceId || !userId) {
-      return send(ws, { type: "error", message: "Join a space first" });
-    }
-    const x = payload?.x;
-    const y = payload?.y;
 
-    if(typeof x !== "number" || typeof y !== "number"){
-      return send(ws ,{type:"error" , message:"x and y required"});
-    };
+  ws.data.x = payload.x;
+  ws.data.y = payload.y;
+  updatePosition(spaceId, userId, payload.x, payload.y);
 
-    const dx = Math.abs(x - curX);
-    const dy = Math.abs(y - curY);
-    const isOneTile = dx + dy === 1 ;
+  broadcast(spaceId, userId, {
+    type: "movement",
+    payload: { userId, x: payload.x, y: payload.y },
+  });
+}
 
-    if (!isOneTile) {
-      return send(ws, {
-        type: "movement-rejected",
-        payload: { x: curX, y: curY },
-      });
-    }
-     ws.data.x = x;
-    ws.data.y = y;
-    updatePosition(spaceId, userId, x, y);
-
-    broadcast(spaceId, userId, {
-      type: "movement",
-      payload: { userId, x, y },
-    });
-  }
 export function onClose(ws: Socket) {
-    const { spaceId, userId } = ws.data;
-    if (!spaceId || !userId) return;
+  const { spaceId, userId } = ws.data;
+  if (!spaceId || !userId) return;
 
-    removeFromRoom(spaceId, userId);
+  removeFromRoom(spaceId, userId);
 
-    broadcast(spaceId, userId, {
-      type: "user-left",
-      payload: { userId },
-    });
-  }
+  broadcast(spaceId, userId, {
+    type: "user-left",
+    payload: { userId },
+  });
+}
