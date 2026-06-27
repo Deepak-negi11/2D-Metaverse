@@ -5,10 +5,21 @@ import type { Socket, SocketData } from "./room-manager";
 import {
   addToRoom,
   broadcast,
-  othersInRoom,
   removeFromRoom,
+  roomSize,
   updatePosition,
 } from "./room-manager";
+import {
+  getRoomUsers,
+  removeUser,
+  setUserOnline,
+  setUserPosition,
+} from "./presence";
+import {
+  publishRoomEvent,
+  subscribeToSpaceEvents,
+  unsubscribeFromSpaceEvents,
+} from "./pubsub";
 
 type JoinPayload = {
   spaceId: string;
@@ -74,11 +85,16 @@ async function handleJoin(ws: Socket, payload: JoinPayload) {
   ws.data.x = spawn.x;
   ws.data.y = spawn.y;
 
-  const existingUsers = othersInRoom(payload.spaceId, userId).map((member) => ({
-    id: member.userId,
-    x: member.x,
-    y: member.y,
-  }));
+  await setUserOnline(payload.spaceId, userId, spawn);
+
+  const roomUsers = await getRoomUsers(payload.spaceId);
+  const existingUsers = roomUsers
+    .filter((user) => user.userId !== userId)
+    .map((user) => ({
+      id: user.userId,
+      x: user.x,
+      y: user.y,
+    }));
 
   addToRoom(payload.spaceId, {
     socket: ws,
@@ -86,19 +102,23 @@ async function handleJoin(ws: Socket, payload: JoinPayload) {
     x: spawn.x,
     y: spawn.y,
   });
+  await subscribeToSpaceEvents(payload.spaceId);
 
   send(ws, {
     type: "space-joined",
     payload: { userId, spawn, users: existingUsers },
   });
 
-  broadcast(payload.spaceId, userId, {
+  const message = {
     type: "user-join",
     payload: { userId, x: spawn.x, y: spawn.y },
-  });
+  } as const;
+
+  broadcast(payload.spaceId, userId, message);
+  await publishRoomEvent(payload.spaceId, userId, message);
 }
 
-function handleMove(ws: Socket, payload: MovePayload) {
+async function handleMove(ws: Socket, payload: MovePayload) {
   const { spaceId, userId, x: currentX, y: currentY } = ws.data;
 
   if (!spaceId || !userId) {
@@ -117,20 +137,36 @@ function handleMove(ws: Socket, payload: MovePayload) {
   ws.data.y = payload.y;
   updatePosition(spaceId, userId, payload.x, payload.y);
 
-  broadcast(spaceId, userId, {
+  await setUserPosition(spaceId, userId, {
+    x: payload.x,
+    y: payload.y,
+  });
+
+  const message = {
     type: "movement",
     payload: { userId, x: payload.x, y: payload.y },
-  });
+  } as const;
+
+  broadcast(spaceId, userId, message);
+  await publishRoomEvent(spaceId, userId, message);
 }
 
-export function onClose(ws: Socket) {
+export async function onClose(ws: Socket) {
   const { spaceId, userId } = ws.data;
   if (!spaceId || !userId) return;
 
   removeFromRoom(spaceId, userId);
+  await removeUser(spaceId, userId);
 
-  broadcast(spaceId, userId, {
+  const message = {
     type: "user-left",
     payload: { userId },
-  });
+  } as const;
+
+  broadcast(spaceId, userId, message);
+  await publishRoomEvent(spaceId, userId, message);
+
+  if (roomSize(spaceId) === 0) {
+    await unsubscribeFromSpaceEvents(spaceId);
+  }
 }

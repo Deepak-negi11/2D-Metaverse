@@ -20,9 +20,14 @@ import {
 } from "./src/space/space";
 import { makeSocketData, onMessage, onClose } from "./src/ws/ws-handler";
 import type { SocketData } from "./src/ws/room-manager";
+import { stopAllRoomEventSubscriptions } from "./src/ws/pubsub";
+
+let activeServers = 0;
 
 export function startServer(port: number) {
-  return Bun.serve({
+  activeServers += 1;
+
+  const server = Bun.serve({
     port,
     routes: {
       // auth
@@ -60,4 +65,22 @@ export function startServer(port: number) {
       close: onClose,
     },
   });
+
+  const stopServer = server.stop.bind(server);
+  let stopped = false;
+
+  server.stop = ((closeActiveConnections?: boolean) => {
+    if (!stopped) {
+      stopped = true;
+      activeServers -= 1;
+
+      if (activeServers === 0) {
+        void stopAllRoomEventSubscriptions();
+      }
+    }
+
+    return stopServer(closeActiveConnections);
+  }) as typeof server.stop;
+
+  return server;
 }
